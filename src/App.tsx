@@ -1,9 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Heart, Sparkles, ChevronUp, ChevronDown, Bookmark, Link, BookmarkCheck, ArrowLeft, X, Search, Banknote, Star, User, Plus } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { 
+  Bookmark, 
+  Plus, 
+  Search, 
+  Menu, 
+  ArrowLeft, 
+  Share2, 
+  Pin, 
+  X,
+  Heart,
+  DollarSign,
+  Activity,
+  Star,
+  BookOpen,
+  TrendingUp,
+  Zap,
+  Target
+} from 'lucide-react';
+import { secureStorage, generateSecureId, rateLimiter } from './utils/security';
 import { DollarBillIcon } from './components/DollarBillIcon';
 import { HealthIcon } from './components/HealthIcon';
-import { sanitizeInput, secureStorage, rateLimiter } from './utils/security';
 
+// AFFIRMATIONS DATA
 const loveAffirmations = [
   "I am worthy of deep love",
   "Love flows to me effortlessly", 
@@ -415,1333 +433,510 @@ const speechAffirmations = [
   "I am comfortable with silence and pauses"
 ];
 
-// Combine all affirmations with category labels
-const allAffirmations = [
-  ...loveAffirmations.map(text => ({ text, category: 'love' })),
-  ...wealthAffirmations.map(text => ({ text, category: 'wealth' })),
-  ...healthAffirmations.map(text => ({ text, category: 'health' })),
-  ...learningAffirmations.map(text => ({ text, category: 'learning' })),
-  ...speechAffirmations.map(text => ({ text, category: 'speech' }))
+// Combine all affirmations into a single array with proper IDs and categories
+const affirmations = [
+  ...loveAffirmations.map((text, index) => ({ id: index + 1, text, category: "love" })),
+  ...wealthAffirmations.map((text, index) => ({ id: index + loveAffirmations.length + 1, text, category: "wealth" })),
+  ...healthAffirmations.map((text, index) => ({ id: index + loveAffirmations.length + wealthAffirmations.length + 1, text, category: "health" })),
+  ...learningAffirmations.map((text, index) => ({ id: index + loveAffirmations.length + wealthAffirmations.length + healthAffirmations.length + 1, text, category: "learning" })),
+  ...speechAffirmations.map((text, index) => ({ id: index + loveAffirmations.length + wealthAffirmations.length + healthAffirmations.length + learningAffirmations.length + 1, text, category: "speech" }))
 ];
 
-const topics = [
-  { name: "#love", keywords: ["worthy", "love", "deserve", "radiate", "magnet", "overflows", "heart", "connects"] },
-  { name: "#wealth", keywords: ["money", "wealth", "business", "financial", "prosperity", "abundance", "income", "profit"] },
-  { name: "#health", keywords: ["healthy", "body", "energy", "strong", "vitality", "exercise", "heal", "immune"] },
-  { name: "#learn", keywords: ["learn", "knowledge", "mind", "brain", "study", "understand", "master", "intelligent"] },
-  { name: "#speech", keywords: ["speak", "voice", "communicate", "words", "express", "articulate", "confident", "clear"] },
-  { name: "#abundance", keywords: ["flows", "effortlessly", "surrounds", "available", "fills"] },
-  { name: "#natural", keywords: ["natural", "state", "form", "cell", "being"] }
-];
+// INTERFACES
+interface Affirmation {
+  id: number;
+  text: string;
+  category: string;
+}
 
-function App() {
-  const [currentView, setCurrentView] = useState<'main' | 'bookmarks' | 'search'>('main');
-  const [currentAffirmation, setCurrentAffirmation] = useState(() => {
-    const randomAffirmation = allAffirmations[Math.floor(Math.random() * allAffirmations.length)];
-    return randomAffirmation;
-  });
-  const [affirmationHistory, setAffirmationHistory] = useState<typeof currentAffirmation[]>([]);
-  const [currentHistoryIndex, setCurrentHistoryIndex] = useState(-1);
-  const [currentAffirmationIndex, setCurrentAffirmationIndex] = useState(0);
-  const [bookmarkedPhrases, setBookmarkedPhrases] = useState<string[]>([]);
-  const [showCopyAlert, setShowCopyAlert] = useState(false);
-  const [isBookmarked, setIsBookmarked] = useState(false);
+interface BookmarkedAffirmation extends Affirmation {
+  bookmarkId: string;
+  isPinned: boolean;
+  dateAdded: number;
+}
+
+// MAIN APP COMPONENT
+const App: React.FC = () => {
+  // State management
+  const [currentAffirmation, setCurrentAffirmation] = useState<Affirmation>(affirmations[0]);
   const [clickedLetters, setClickedLetters] = useState<Set<number>>(new Set());
-  const [showHearts, setShowHearts] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isTouching, setIsTouching] = useState(false);
-  const [dynamicFontSize, setDynamicFontSize] = useState('text-[16vw] sm:text-[14vw] md:text-[12vw] lg:text-[10vw] xl:text-[8vw] 2xl:text-[7vw]');
-  const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(null);
-  const [touchEnd, setTouchEnd] = useState<{ x: number; y: number } | null>(null);
-  const [deleteConfirmation, setDeleteConfirmation] = useState<string | null>(null);
+  const [showBurst, setShowBurst] = useState(false);
+  const [currentView, setCurrentView] = useState<'main' | 'bookmarks' | 'search'>('main');
+  const [bookmarks, setBookmarks] = useState<BookmarkedAffirmation[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<string[]>([]);
-  const [pinnedPhrases, setPinnedPhrases] = useState<string[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [categoryAffirmations, setCategoryAffirmations] = useState<typeof allAffirmations>([]);
-  const [usedCategoryAffirmations, setUsedCategoryAffirmations] = useState<Set<string>>(new Set());
-  const [showPlusPopup, setShowPlusPopup] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [isContinuousMode, setIsContinuousMode] = useState(false);
-  const [wasHoldActivated, setWasHoldActivated] = useState(false);
-  const [recognitionInstance, setRecognitionInstance] = useState<SpeechRecognition | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [affirmationHistory, setAffirmationHistory] = useState<Affirmation[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [burstElements, setBurstElements] = useState<Array<{ id: string; x: number; y: number; delay: number }>>([]);
 
-  // Load bookmarks from localStorage on component mount
+  const affirmationRef = useRef<HTMLDivElement>(null);
+  const touchStartY = useRef<number>(0);
+
+  // Load bookmarks on mount
   useEffect(() => {
-    const savedBookmarks = secureStorage.getItem('affirmation-bookmarks');
-    if (savedBookmarks) {
-      setBookmarkedPhrases(savedBookmarks);
-    }
-    const savedPinned = secureStorage.getItem('affirmation-pinned');
-    if (savedPinned) {
-      setPinnedPhrases(savedPinned);
+    const savedBookmarks = secureStorage.getItem('goaly-bookmarks') || [];
+    setBookmarks(savedBookmarks);
+    
+    const savedHistory = secureStorage.getItem('goaly-history') || [];
+    if (savedHistory.length > 0) {
+      setAffirmationHistory(savedHistory);
+      setCurrentAffirmation(savedHistory[savedHistory.length - 1]);
+      setHistoryIndex(savedHistory.length - 1);
+    } else {
+      const randomAffirmation = getRandomAffirmation();
+      setCurrentAffirmation(randomAffirmation);
+      addToHistory(randomAffirmation);
     }
   }, []);
 
-  // Save bookmarks to localStorage whenever bookmarks change
-  useEffect(() => {
-    secureStorage.setItem('affirmation-bookmarks', bookmarkedPhrases);
-  }, [bookmarkedPhrases]);
+  // Utility functions
+  const getRandomAffirmation = useCallback((): Affirmation => {
+    const randomIndex = Math.floor(Math.random() * affirmations.length);
+    return affirmations[randomIndex];
+  }, []);
 
-  // Save pinned phrases to localStorage whenever they change
-  useEffect(() => {
-    secureStorage.setItem('affirmation-pinned', pinnedPhrases);
-  }, [pinnedPhrases]);
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // Rate limit keyboard actions
-      if (!rateLimiter.isAllowed('keyboard', 50, 60000)) {
-        return;
-      }
-      
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        generateNewPhrase();
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        goToPreviousAffirmation();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentAffirmationIndex, affirmationHistory]);
-
-  // Fuzzy text matching function
-  const isTextMatch = (spoken: string, target: string): boolean => {
-    // Remove punctuation and extra spaces
-    const cleanSpoken = spoken.replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
-    const cleanTarget = target.replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
-    
-    // Exact match
-    if (cleanSpoken === cleanTarget) return true;
-    
-    // Word-by-word matching (allows for small differences)
-    const spokenWords = cleanSpoken.split(' ');
-    const targetWords = cleanTarget.split(' ');
-    
-    if (spokenWords.length !== targetWords.length) return false;
-    
-    let matchCount = 0;
-    for (let i = 0; i < targetWords.length; i++) {
-      const spokenWord = spokenWords[i];
-      const targetWord = targetWords[i];
-      
-      // Exact word match
-      if (spokenWord === targetWord) {
-        matchCount++;
-      }
-      // Similar word match (handles pronunciation variations)
-      else if (isWordSimilar(spokenWord, targetWord)) {
-        matchCount++;
-      }
-    }
-    
-    // Require at least 80% word match
-    return matchCount / targetWords.length >= 0.8;
-  };
-
-  // Check if two words are similar (handles common speech recognition errors)
-  const isWordSimilar = (word1: string, word2: string): boolean => {
-    // Simple similarity check - you could enhance this with more sophisticated algorithms
-    if (Math.abs(word1.length - word2.length) > 2) return false;
-    
-    let differences = 0;
-    const maxLength = Math.max(word1.length, word2.length);
-    
-    for (let i = 0; i < maxLength; i++) {
-      if (word1[i] !== word2[i]) {
-        differences++;
-      }
-    }
-    
-    return differences <= 2; // Allow up to 2 character differences
-  };
-
-  const fillAllLettersGradually = () => {
-    const letters = currentAffirmation.text.split('');
-    const nonSpaceIndices = letters
-      .map((char, index) => ({ char, index }))
-      .filter(({ char }) => char !== ' ')
-      .map(({ index }) => index);
-    
-    // Fill letters gradually with animation
-    nonSpaceIndices.forEach((index, i) => {
-      setTimeout(() => {
-        setClickedLetters(prev => new Set([...prev, index]));
-      }, i * 50); // 50ms delay between each letter
-    });
-  };
-
-  const startListening = () => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert('Speech recognition not supported in this browser');
-      return;
-    }
-
-    // Stop any existing recognition first
-    if (recognitionInstance) {
-      recognitionInstance.stop();
-    }
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    setRecognitionInstance(recognition);
-    
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      setIsListening(true);
-    };
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let transcript = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          transcript += event.results[i][0].transcript;
-        }
-      }
-      
-      // Stop flashing after processing the sentence
-      setIsProcessing(false);
-      
-      transcript = transcript.toLowerCase().trim();
-      if (!transcript) return;
-      
-      console.log('Speech recognized:', transcript);
-      
-      // Check if the transcript matches the current affirmation
-      if (isTextMatch(transcript, currentAffirmation.text)) {
-        console.log('Match found! Filling letters...');
-        fillAllLettersGradually();
-        
-        // In continuous mode, get new affirmation after successful match
-        if (isContinuousMode) {
-          setTimeout(() => {
-            generateNewPhrase();
-          }, 2000); // Wait 2 seconds after animation completes
-        }
-      }
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
-      if (event.error === 'no-speech' || event.error === 'audio-capture') {
-        // Restart recognition for these recoverable errors in continuous mode
-        if (isContinuousMode) {
-          setTimeout(() => {
-            if (isContinuousMode) {
-              recognition.start();
-            }
-          }, 100);
-        } else {
-          setIsListening(false);
-        }
-      } else {
-        setIsListening(false);
-        setIsContinuousMode(false);
-      }
-    };
-
-    recognition.onend = () => {
-      console.log('Recognition ended, continuous mode:', isContinuousMode);
-      if (isContinuousMode) {
-        // Restart recognition in continuous mode
-        setTimeout(() => {
-          if (isContinuousMode) {
-            recognition.start();
-          }
-        }, 100);
-      } else {
-        setIsListening(false);
-      }
-    };
-
-    try {
-      recognition.start();
-    } catch (error) {
-      console.error('Error starting speech recognition:', error);
-      setIsListening(false);
-    }
-  };
-
-  const stopListening = () => {
-    if (recognitionInstance) {
-      recognitionInstance.stop();
-      setRecognitionInstance(null);
-    }
-    setIsListening(false);
-    setIsContinuousMode(false);
-  };
-
-  const handleMicrophoneMouseDown = () => {
-    setWasHoldActivated(false);
-    holdTimerRef.current = setTimeout(() => {
-      setIsContinuousMode(true);
-      setWasHoldActivated(true);
-      startListening();
-      console.log('Continuous listening mode enabled');
-    }, 3000);
-  };
-
-  const handleMicrophoneMouseUp = () => {
-    if (holdTimerRef.current) {
-      clearTimeout(holdTimerRef.current);
-      holdTimerRef.current = null;
-    }
-
-    if (!wasHoldActivated) {
-      // Quick tap - start single-use listening
-      setIsContinuousMode(false);
-      startListening();
-    }
-
-    setTimeout(() => {
-      setWasHoldActivated(false);
-    }, 100);
-  };
-
-  const toggleListening = () => {
-    if (isListening) {
-      stopListening();
-    } else {
-      setIsContinuousMode(false);
-      startListening();
-    }
-  };
-
-  const handleMicrophoneClick = () => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert('Speech recognition not supported in this browser');
-      return;
-    }
-
-    setIsProcessing(true);
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    let hasProcessed = false;
-
-    recognition.onresult = (event: any) => {
-      if (hasProcessed) return;
-      hasProcessed = true;
-
-      const transcript = event.results[0][0].transcript.toLowerCase().trim();
-      setIsProcessing(false);
-      recognition.stop();
-
-      // Check for love-related keywords
-      const loveKeywords = ['love', 'heart', 'romance', 'relationship', 'affection', 'beautiful', 'gorgeous', 'attractive'];
-      const wealthKeywords = ['money', 'wealth', 'rich', 'success', 'business', 'financial', 'prosperity', 'abundance'];
-      const healthKeywords = ['health', 'fitness', 'strong', 'energy', 'body', 'exercise', 'healthy', 'vitality'];
-      const learningKeywords = ['learn', 'study', 'knowledge', 'smart', 'intelligent', 'education', 'brain', 'mind'];
-      
-      let foundMatch = false;
-      
-      // Check for category keywords and set appropriate affirmation
-      if (loveKeywords.some(keyword => transcript.includes(keyword))) {
-        const loveAffirmation = loveAffirmations[Math.floor(Math.random() * loveAffirmations.length)];
-        setCurrentAffirmation({ text: loveAffirmation, category: 'love' });
-        foundMatch = true;
-      } else if (wealthKeywords.some(keyword => transcript.includes(keyword))) {
-        const wealthAffirmation = wealthAffirmations[Math.floor(Math.random() * wealthAffirmations.length)];
-        setCurrentAffirmation({ text: wealthAffirmation, category: 'wealth' });
-        foundMatch = true;
-      } else if (healthKeywords.some(keyword => transcript.includes(keyword))) {
-        const healthAffirmation = healthAffirmations[Math.floor(Math.random() * healthAffirmations.length)];
-        setCurrentAffirmation({ text: healthAffirmation, category: 'health' });
-        foundMatch = true;
-      } else if (learningKeywords.some(keyword => transcript.includes(keyword))) {
-        const learningAffirmation = learningAffirmations[Math.floor(Math.random() * learningAffirmations.length)];
-        setCurrentAffirmation({ text: learningAffirmation, category: 'learning' });
-        foundMatch = true;
-      }
-      
-      if (foundMatch) {
-        triggerBurstAnimation();
-      }
-    };
-
-    recognition.onerror = () => {
-      setIsProcessing(false);
-    };
-
-    recognition.onend = () => {
-      setIsProcessing(false);
-    };
-
-    recognition.start();
-  };
-
-  // Search functionality
-  const handleSearch = (query: string) => {
-    // Rate limit search actions
-    if (!rateLimiter.isAllowed('search', 30, 60000)) {
-      return;
-    }
-    
-    const sanitizedQuery = sanitizeInput(query);
-    setSearchQuery(sanitizedQuery);
-    if (sanitizedQuery.trim() === '') {
-      setSearchResults([]);
-      return;
-    }
-
-    const results = allAffirmations.filter(affirmation =>
-      affirmation.text.toLowerCase().includes(sanitizedQuery.toLowerCase())
-    );
-    setSearchResults(results.map(a => a.text));
-  };
-
-  const handleTopicSearch = (topic: typeof topics[0]) => {
-    // Rate limit category filter actions
-    if (!rateLimiter.isAllowed('categoryFilter', 20, 60000)) {
-      return;
-    }
-    
-    // Filter affirmations by topic keywords
-    const categoryAffirmations = allAffirmations.filter(affirmation =>
-      topic.keywords.some(keyword =>
-        affirmation.text.toLowerCase().includes(keyword.toLowerCase())
-      )
-    );
-    
-    // Select a random affirmation from the category
-    if (categoryAffirmations.length > 0) {
-      // Set up category browsing state
-      setSelectedCategory(topic.name);
-      setCategoryAffirmations(categoryAffirmations);
-      setUsedCategoryAffirmations(new Set());
-      
-      const randomAffirmation = categoryAffirmations[Math.floor(Math.random() * categoryAffirmations.length)];
-      setCurrentAffirmation(randomAffirmation);
-      setUsedCategoryAffirmations(new Set([randomAffirmation.text]));
-    }
-    
-    // Return to main feed
-    setCurrentView('main');
-    setSearchQuery('');
-    setSearchResults([]);
-    // Reset history and interactions for clean state
-    setAffirmationHistory([]);
-    setCurrentHistoryIndex(-1);
-    setClickedLetters(new Set());
-    setShowHearts(false);
-    setIsResetting(false);
-  };
-
-  const handleSearchResultClick = (phrase: string) => {
-    // Rate limit affirmation selection
-    if (!rateLimiter.isAllowed('selectAffirmation', 30, 60000)) {
-      return;
-    }
-    
-    const affirmationObj = allAffirmations.find(a => a.text === phrase);
-    if (affirmationObj) {
-      setCurrentAffirmation(affirmationObj);
-    }
-    setCurrentView('main');
-    setSearchQuery('');
-    setSearchResults([]);
-    // Reset history and interactions for clean state
-    setAffirmationHistory([]);
-    setCurrentHistoryIndex(-1);
-    setClickedLetters(new Set());
-    setShowHearts(false);
-    setIsResetting(false);
-    // Reset category browsing
-    setSelectedCategory(null);
-    setCategoryAffirmations([]);
-    setUsedCategoryAffirmations(new Set());
-  };
-
-  const returnToMainFeed = () => {
-    // Generate a new random affirmation
-    const newAffirmation = allAffirmations[Math.floor(Math.random() * allAffirmations.length)];
-    setCurrentAffirmation(newAffirmation);
-    setCurrentView('main');
-    // Reset all state for fresh start
-    setAffirmationHistory([]);
-    setCurrentHistoryIndex(-1);
-    setClickedLetters(new Set());
-    setShowHearts(false);
-    setIsResetting(false);
-    setSearchQuery('');
-    setSearchResults([]);
-    // Reset category browsing
-    setSelectedCategory(null);
-    setCategoryAffirmations([]);
-    setUsedCategoryAffirmations(new Set());
-  };
-
-  // Split affirmation into individual characters (including spaces)
-  const letters = currentAffirmation.text.split('');
-  const totalLetters = letters.filter(char => char !== ' ').length;
-
-  // Calculate optimal font size based on content
-  const calculateOptimalFontSize = (text: string) => {
-    // Use consistent, larger font sizes for all phrases
-    return 'text-[14vw] sm:text-[12vw] md:text-[10vw] lg:text-[8vw] xl:text-[6vw] 2xl:text-[5vw]';
-  };
-
-  // Update font size when affirmation changes
-  useEffect(() => {
-    setDynamicFontSize(calculateOptimalFontSize(currentAffirmation.text));
-  }, [currentAffirmation]);
-
-  const generateNewPhrase = () => {
-    // Rate limit new affirmation requests
-    if (!rateLimiter.isAllowed('newAffirmation', 20, 60000)) {
-      return;
-    }
-    
-    if (isResetting) return;
-    
-    // Add current affirmation to history and maintain max 10 items
+  const addToHistory = useCallback((affirmation: Affirmation) => {
     setAffirmationHistory(prev => {
-      const newHistory = [...prev];
-      if (currentHistoryIndex === -1 || newHistory[currentHistoryIndex]?.text !== currentAffirmation.text) {
-        newHistory.push(currentAffirmation);
-        // Keep only last 10 items
-        if (newHistory.length > 10) {
-          newHistory.shift();
-        }
-      }
+      const newHistory = [...prev, affirmation].slice(-10); // Keep last 10
+      secureStorage.setItem('goaly-history', newHistory);
       return newHistory;
     });
-    
-    setCurrentHistoryIndex(prev => {
-      const newIndex = prev === -1 ? 0 : Math.min(prev + 1, 9);
-      return newIndex;
-    });
-    
-    let newAffirmation;
-    
-    // If we're in category browsing mode
-    if (selectedCategory && categoryAffirmations.length > 0) {
-      // Get unused affirmations from the current category
-      const unusedCategoryAffirmations = categoryAffirmations.filter(
-        affirmation => !usedCategoryAffirmations.has(affirmation.text)
-      );
-      
-      if (unusedCategoryAffirmations.length > 0) {
-        // Select from unused category affirmations
-        newAffirmation = unusedCategoryAffirmations[Math.floor(Math.random() * unusedCategoryAffirmations.length)];
-        setUsedCategoryAffirmations(prev => new Set([...prev, newAffirmation.text]));
-      } else {
-        // All category affirmations used, switch to random mode
-        setSelectedCategory(null);
-        setCategoryAffirmations([]);
-        setUsedCategoryAffirmations(new Set());
-        
-        // Generate random affirmation from all categories
-        do {
-          newAffirmation = allAffirmations[Math.floor(Math.random() * allAffirmations.length)];
-        } while (newAffirmation.text === currentAffirmation.text);
-      }
-    } else {
-      // Normal random mode
-      do {
-        newAffirmation = allAffirmations[Math.floor(Math.random() * allAffirmations.length)];
-      } while (newAffirmation.text === currentAffirmation.text);
-    }
-    
-    setIsResetting(true);
-    setShowHearts(false);
-    setClickedLetters(new Set());
-    
-    setTimeout(() => {
-      setCurrentAffirmation(newAffirmation);
-      setIsResetting(false);
-    }, 300);
-  };
-
-  const goToNextPhrase = () => {
-    if (isResetting) return;
-    
-    // If we're not at the end of history, go forward
-    if (currentHistoryIndex < affirmationHistory.length - 1) {
-      const nextIndex = currentHistoryIndex + 1;
-      const nextAffirmation = affirmationHistory[nextIndex];
-      
-      setIsResetting(true);
-      setShowHearts(false);
-      setClickedLetters(new Set());
-      
-      setTimeout(() => {
-        setCurrentAffirmation(nextAffirmation);
-        setCurrentHistoryIndex(nextIndex);
-        setIsResetting(false);
-      }, 300);
-    } else {
-      // Generate new phrase if at the end
-      generateNewPhrase();
-    }
-  };
-
-  const goToPreviousPhrase = () => {
-    if (isResetting || currentHistoryIndex <= 0) return;
-    
-    const previousIndex = currentHistoryIndex - 1;
-    const previousAffirmation = affirmationHistory[previousIndex];
-    
-    setIsResetting(true);
-    setShowHearts(false);
-    setClickedLetters(new Set());
-    
-    setTimeout(() => {
-      setCurrentAffirmation(previousAffirmation);
-      setCurrentHistoryIndex(previousIndex);
-      setIsResetting(false);
-    }, 300);
-  };
-
-  const handleBookmark = () => {
-    // Rate limit bookmark actions
-    if (!rateLimiter.isAllowed('bookmark', 30, 60000)) {
-      return;
-    }
-    
-    if (bookmarkedPhrases.includes(currentAffirmation.text)) {
-      // Remove from bookmarks
-      setBookmarkedPhrases(prev => prev.filter(phrase => phrase !== currentAffirmation.text));
-    } else {
-      // Add to bookmarks (newest first)
-      setBookmarkedPhrases(prev => [currentAffirmation.text, ...prev]);
-    }
-  };
-
-  const handleShare = async () => {
-    // Rate limit share actions
-    if (!rateLimiter.isAllowed('share', 10, 60000)) {
-      return;
-    }
-    
-    const url = `${window.location.origin}?phrase=${encodeURIComponent(currentAffirmation.text)}`;
-    
-    try {
-      await navigator.clipboard.writeText(url);
-      setShowCopyAlert(true);
-      setTimeout(() => setShowCopyAlert(false), 3000);
-    } catch (err) {
-      // Fallback for browsers that don't support clipboard API
-      const textArea = document.createElement('textarea');
-      textArea.value = url;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setShowCopyAlert(true);
-      setTimeout(() => setShowCopyAlert(false), 3000);
-    }
-  };
-
-  const handleRemoveBookmark = (phraseToRemove: string) => {
-    // Rate limit delete actions
-    if (!rateLimiter.isAllowed('delete', 20, 60000)) {
-      return;
-    }
-    
-    setBookmarkedPhrases(prev => prev.filter(phrase => phrase !== phraseToRemove));
-    setPinnedPhrases(prev => prev.filter(phrase => phrase !== phraseToRemove));
-    setDeleteConfirmation(null);
-  };
-
-  const handlePinPhrase = (phrase: string, e: React.MouseEvent) => {
-    // Rate limit pin actions
-    if (!rateLimiter.isAllowed('pin', 20, 60000)) {
-      return;
-    }
-    
-    e.stopPropagation(); // Prevent triggering the bookmark click
-    
-    if (pinnedPhrases.includes(phrase)) {
-      // Unpin the phrase
-      setPinnedPhrases(prev => prev.filter(p => p !== phrase));
-    } else {
-      // Pin the phrase to the top
-      setPinnedPhrases(prev => [phrase, ...prev]);
-    }
-  };
-
-  // Organize bookmarks: pinned first, then unpinned
-  const organizedBookmarks = [
-    ...pinnedPhrases.filter(phrase => bookmarkedPhrases.includes(phrase)),
-    ...bookmarkedPhrases.filter(phrase => !pinnedPhrases.includes(phrase))
-  ];
-
-  const handleBookmarkClick = (phrase: string) => {
-    // Rate limit affirmation selection
-    if (!rateLimiter.isAllowed('selectAffirmation', 30, 60000)) {
-      return;
-    }
-    
-    // Navigate back to main view with the selected phrase
-    const affirmationObj = allAffirmations.find(a => a.text === phrase);
-    if (affirmationObj) {
-      setCurrentAffirmation(affirmationObj);
-    }
-    setCurrentView('main');
-    // Reset history and interactions for clean state
-    setAffirmationHistory([]);
-    setCurrentHistoryIndex(-1);
-    setClickedLetters(new Set());
-    setShowHearts(false);
-    setIsResetting(false);
-    // Reset category browsing
-    setSelectedCategory(null);
-    setCategoryAffirmations([]);
-    setUsedCategoryAffirmations(new Set());
-  };
-
-  const handleDeleteClick = (phrase: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent triggering the bookmark click
-    setDeleteConfirmation(phrase);
-  };
-
-  // Handle URL parameters for shared phrases
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const sharedPhrase = urlParams.get('phrase');
-    if (sharedPhrase) {
-      const sanitizedAffirmation = sanitizeInput(decodeURIComponent(sharedPhrase));
-      const affirmationObj = allAffirmations.find(a => a.text === sanitizedAffirmation);
-      if (affirmationObj) {
-        setCurrentAffirmation(affirmationObj);
-      }
-      // Clear the URL parameter
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
+    setHistoryIndex(prev => Math.min(prev + 1, 9));
   }, []);
 
-  // Handle scroll events
-  useEffect(() => {
-    const handleWheel = (e: WheelEvent) => {
-      if (currentView !== 'main') return;
+  const getNewAffirmation = useCallback(() => {
+    if (!rateLimiter.isAllowed('new-affirmation', 30, 60000)) {
+      return; // Rate limit: 30 requests per minute
+    }
+    
+    const newAffirmation = getRandomAffirmation();
+    setCurrentAffirmation(newAffirmation);
+    setClickedLetters(new Set());
+    setShowBurst(false);
+    addToHistory(newAffirmation);
+  }, [getRandomAffirmation, addToHistory]);
+
+  const goToPreviousAffirmation = useCallback(() => {
+    if (historyIndex > 0) {
+      const prevIndex = historyIndex - 1;
+      setCurrentAffirmation(affirmationHistory[prevIndex]);
+      setHistoryIndex(prevIndex);
+      setClickedLetters(new Set());
+      setShowBurst(false);
+    }
+  }, [historyIndex, affirmationHistory]);
+
+  // Letter clicking logic
+  const handleLetterClick = useCallback((letterIndex: number, event: React.MouseEvent) => {
+    if (!rateLimiter.isAllowed('letter-click', 100, 10000)) {
+      return; // Rate limit: 100 clicks per 10 seconds
+    }
+
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+
+    setClickedLetters(prev => {
+      const newSet = new Set(prev);
+      newSet.add(letterIndex);
       
-      e.preventDefault();
+      const totalLetters = currentAffirmation.text.replace(/\s/g, '').length;
+      if (newSet.size === totalLetters) {
+        triggerBurstAnimation(x, y);
+      }
       
-      if (e.deltaY > 0) {
-        // Scrolling down - go to next phrase
-        goToNextPhrase();
+      return newSet;
+    });
+  }, [currentAffirmation.text]);
+
+  const triggerBurstAnimation = useCallback((centerX: number, centerY: number) => {
+    setShowBurst(true);
+    
+    const elements = Array.from({ length: 12 }, (_, i) => ({
+      id: generateSecureId(),
+      x: centerX + (Math.random() - 0.5) * 400,
+      y: centerY + (Math.random() - 0.5) * 400,
+      delay: i * 100
+    }));
+    
+    setBurstElements(elements);
+    
+    setTimeout(() => {
+      setShowBurst(false);
+      setBurstElements([]);
+    }, 2000);
+  }, []);
+
+  // Bookmark functions
+  const isBookmarked = useCallback((affirmation: Affirmation): boolean => {
+    return bookmarks.some(bookmark => bookmark.id === affirmation.id);
+  }, [bookmarks]);
+
+  const toggleBookmark = useCallback(() => {
+    if (!rateLimiter.isAllowed('bookmark-toggle', 20, 60000)) {
+      return;
+    }
+
+    setBookmarks(prev => {
+      let newBookmarks;
+      const existingIndex = prev.findIndex(bookmark => bookmark.id === currentAffirmation.id);
+      
+      if (existingIndex >= 0) {
+        newBookmarks = prev.filter((_, index) => index !== existingIndex);
       } else {
-        // Scrolling up - go to previous phrase
-        goToPreviousPhrase();
+        const newBookmark: BookmarkedAffirmation = {
+          ...currentAffirmation,
+          bookmarkId: generateSecureId(),
+          isPinned: false,
+          dateAdded: Date.now()
+        };
+        newBookmarks = [...prev, newBookmark];
+      }
+      
+      secureStorage.setItem('goaly-bookmarks', newBookmarks);
+      return newBookmarks;
+    });
+  }, [currentAffirmation]);
+
+  const togglePin = useCallback((bookmarkId: string) => {
+    setBookmarks(prev => {
+      const newBookmarks = prev.map(bookmark =>
+        bookmark.bookmarkId === bookmarkId
+          ? { ...bookmark, isPinned: !bookmark.isPinned }
+          : bookmark
+      );
+      secureStorage.setItem('goaly-bookmarks', newBookmarks);
+      return newBookmarks;
+    });
+  }, []);
+
+  const deleteBookmark = useCallback((bookmarkId: string) => {
+    setBookmarks(prev => {
+      const newBookmarks = prev.filter(bookmark => bookmark.bookmarkId !== bookmarkId);
+      secureStorage.setItem('goaly-bookmarks', newBookmarks);
+      return newBookmarks;
+    });
+  }, []);
+
+  // Share functionality
+  const shareAffirmation = useCallback(async () => {
+    const shareUrl = `${window.location.origin}?affirmation=${encodeURIComponent(currentAffirmation.text)}`;
+    
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      // Could add a toast notification here
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+    }
+  }, [currentAffirmation]);
+
+  // Touch/swipe handling
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    const touchEndY = e.changedTouches[0].clientY;
+    const deltaY = touchStartY.current - touchEndY;
+    
+    if (Math.abs(deltaY) > 50) {
+      if (deltaY > 0) {
+        getNewAffirmation();
+      } else {
+        goToPreviousAffirmation();
+      }
+    }
+  }, [getNewAffirmation, goToPreviousAffirmation]);
+
+  // Search and filter functions
+  const filteredAffirmations = affirmations.filter(affirmation => {
+    const matchesSearch = affirmation.text.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = selectedCategory === 'all' || affirmation.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  const sortedBookmarks = [...bookmarks].sort((a, b) => {
+    if (a.isPinned && !b.isPinned) return -1;
+    if (!a.isPinned && b.isPinned) return 1;
+    return b.dateAdded - a.dateAdded;
+  });
+
+  // Render letter with effects
+  const renderLetter = (char: string, index: number, letterIndex: number) => {
+    if (char === ' ') return <span key={index}>&nbsp;</span>;
+    
+    const isClicked = clickedLetters.has(letterIndex);
+    const categoryClass = `letter-fill-${currentAffirmation.category}`;
+    const glowClass = `letter-glow-${currentAffirmation.category}`;
+    
+    return (
+      <span
+        key={index}
+        className={`cursor-pointer transition-all duration-300 ${
+          isClicked ? `${categoryClass} ${glowClass} letter-sparkle` : 'text-gray-800'
+        }`}
+        onClick={(e) => handleLetterClick(letterIndex, e)}
+      >
+        {char}
+      </span>
+    );
+  };
+
+  // Render burst animation
+  const renderBurstAnimation = () => {
+    if (!showBurst) return null;
+
+    const BurstIcon = () => {
+      switch (currentAffirmation.category) {
+        case 'love':
+          return <Heart className="w-6 h-6 text-pink-500" />;
+        case 'wealth':
+          return <DollarBillIcon className="w-6 h-6" />;
+        case 'health':
+          return <HealthIcon className="w-6 h-6" />;
+        case 'learning':
+          return <Star className="w-6 h-6 text-yellow-500" />;
+        case 'speech':
+          return <Star className="w-6 h-6 text-purple-500" />;
+        default:
+          return <Star className="w-6 h-6 text-purple-500" />;
       }
     };
 
-    if (currentView === 'main') {
-      window.addEventListener('wheel', handleWheel, { passive: false });
-      return () => window.removeEventListener('wheel', handleWheel);
-    }
-  }, [currentView, currentHistoryIndex, affirmationHistory, currentAffirmation, isResetting]);
-
-  const handleLetterClick = (index: number) => {
-    if (letters[index] === ' ' || clickedLetters.has(index) || isResetting) return;
-    
-    setClickedLetters(prev => new Set([...prev, index]));
-  };
-
-  // Touch handlers for swipe detection
-  const handleTouchStartSwipe = (e: React.TouchEvent) => {
-    setTouchEnd(null);
-    setTouchStart({
-      x: e.targetTouches[0].clientX,
-      y: e.targetTouches[0].clientY
-    });
-  };
-
-  const handleTouchMoveSwipe = (e: React.TouchEvent) => {
-    setTouchEnd({
-      x: e.targetTouches[0].clientX,
-      y: e.targetTouches[0].clientY
-    });
-  };
-
-  const handleTouchEndSwipe = () => {
-    if (!touchStart || !touchEnd) return;
-    
-    const distanceX = touchStart.x - touchEnd.x;
-    const distanceY = touchStart.y - touchEnd.y;
-    const isVerticalSwipe = Math.abs(distanceY) > Math.abs(distanceX);
-    const minSwipeDistance = 50;
-    
-    if (isVerticalSwipe && Math.abs(distanceY) > minSwipeDistance) {
-      if (distanceY > 0) {
-        // Swipe up - next phrase
-        generateNewPhrase();
-      } else {
-        // Swipe down - previous phrase
-        goToPreviousPhrase();
-      }
-    }
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleMouseUp = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    e.preventDefault();
-    setIsTouching(true);
-    setIsDragging(true);
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    e.preventDefault();
-    setIsTouching(false);
-    setIsDragging(false);
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isTouching) return;
-    e.preventDefault();
-    
-    const touch = e.touches[0];
-    const element = document.elementFromPoint(touch.clientX, touch.clientY);
-    
-    if (element && element.hasAttribute('data-letter-index')) {
-      const index = parseInt(element.getAttribute('data-letter-index')!);
-      if (letters[index] !== ' ' && !clickedLetters.has(index) && !isResetting) {
-        setClickedLetters(prev => new Set([...prev, index]));
-      }
-    }
-  };
-
-  const handleMouseEnter = (index: number) => {
-    if ((isDragging || isTouching) && letters[index] !== ' ' && !clickedLetters.has(index) && !isResetting) {
-      setClickedLetters(prev => new Set([...prev, index]));
-    }
-  };
-
-  useEffect(() => {
-    if (clickedLetters.size === totalLetters && !showHearts) {
-      // Small delay before hearts appear
-      setTimeout(() => {
-        setShowHearts(true);
-      }, 500);
-    }
-  }, [clickedLetters.size, totalLetters, showHearts]);
-
-  // Get the appropriate color class based on category
-  const getLetterColorClass = (category: string) => {
-    switch (category) {
-      case 'wealth':
-        return 'letter-fill-wealth letter-glow-wealth';
-      case 'health':
-        return 'letter-fill-health letter-glow-health';
-      case 'learning':
-        return 'letter-fill-learning letter-glow-learning';
-      default:
-        return 'letter-fill letter-glow'; // Default pink for love
-    }
-  };
-
-  useEffect(() => {
-    if (showHearts) {
-      // Hearts animation lasts 3 seconds, then reset
-      const timer = setTimeout(() => {
-        setIsResetting(true);
-        setShowHearts(false);
-        setClickedLetters(new Set());
-        setIsProcessing(false); // Stop microphone flashing when animation starts
-        
-        // Brief delay before allowing interactions again
-        setTimeout(() => {
-          setIsResetting(false);
-        }, 300);
-      }, 3000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [showHearts]);
-
-  // Generate burst effects based on category
-  const generateBurstEffect = () => {
-    const category = currentAffirmation.category;
-    const hearts = [];
-    
-    for (let i = 0; i < 50; i++) {
-      const angle = (i * 7.2) + (Math.random() * 7.2); // More evenly distributed angles
-      const delay = Math.random() * 1000;
-      const duration = 1500 + Math.random() * 1500;
-      const size = 240 + Math.random() * 360;
-      
-      // Calculate end position to reach edges/corners of screen
-      const distance = 800 + Math.random() * 600; // Ensure hearts travel far enough off screen
-      const endX = Math.cos(angle * Math.PI / 180) * distance;
-      const endY = Math.sin(angle * Math.PI / 180) * distance;
-      
-      let IconComponent;
-      let colorClass;
-      
-      switch (category) {
-        case 'wealth':
-          IconComponent = DollarBillIcon;
-          colorClass = 'text-green-500';
-          break;
-        case 'health':
-          IconComponent = HealthIcon;
-          colorClass = 'text-blue-500';
-          break;
-        case 'learning':
-          IconComponent = Star;
-          colorClass = 'text-yellow-500';
-          break;
-        default:
-          IconComponent = Heart;
-          colorClass = 'text-pink-500';
-      }
-      
-      hearts.push(
-        <IconComponent
-          key={i}
-          className={`absolute ${colorClass} pointer-events-none`}
-          style={{
-            left: '50%',
-            top: '50%',
-            width: `${size}px`,
-            height: `${size}px`,
-            animation: `heartBurst ${duration}ms ease-out ${delay}ms both`,
-            '--end-x': `${endX}px`,
-            '--end-y': `${endY}px`,
-            zIndex: 1000,
-          } as React.CSSProperties}
-          fill="currentColor"
-        />
-      );
-    }
-    return hearts;
-  };
-
-  if (currentView === 'search') {
     return (
-      <div className="min-h-screen bg-white p-4">
-        {/* Header */}
-        <div className="flex items-center mb-6">
-          <button
-            onClick={() => setCurrentView('main')}
-            className="hover:scale-110 transition-all duration-200"
+      <div className="fixed inset-0 pointer-events-none z-50">
+        {burstElements.map((element) => (
+          <div
+            key={element.id}
+            className="absolute animate-ping"
+            style={{
+              left: element.x,
+              top: element.y,
+              animationDelay: `${element.delay}ms`,
+              animationDuration: '1s'
+            }}
           >
-            <ArrowLeft className="w-6 h-6 text-gray-700" />
-          </button>
-          <h1 className="text-2xl font-bold text-gray-800 ml-1">Search</h1>
-        </div>
+            <BurstIcon />
+          </div>
+        ))}
+      </div>
+    );
+  };
 
-        {/* Search Bar */}
-        <div className="mb-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+  // Main render
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 font-['Fredoka']">
+      {/* Top Navigation */}
+      <nav className="flex items-center justify-between p-4 bg-white/80 backdrop-blur-sm border-b border-purple-100">
+        <div className="flex items-center space-x-4">
+          {currentView !== 'main' ? (
+            <button
+              onClick={() => setCurrentView('main')}
+              className="p-2 rounded-full hover:bg-purple-100 transition-colors"
+            >
+              <ArrowLeft className="w-6 h-6 text-purple-600" />
+            </button>
+          ) : (
+            <button
+              onClick={getNewAffirmation}
+              className="text-2xl font-['Fredoka_One'] text-purple-600 hover:text-purple-700 transition-colors"
+            >
+              Goaly
+            </button>
+          )}
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setCurrentView('bookmarks')}
+            className="p-2 rounded-full hover:bg-purple-100 transition-colors"
+          >
+            <Bookmark className="w-6 h-6 text-purple-600" />
+          </button>
+          <button
+            onClick={getNewAffirmation}
+            className="p-2 rounded-full hover:bg-purple-100 transition-colors"
+          >
+            <Plus className="w-6 h-6 text-purple-600" />
+          </button>
+          <button
+            onClick={() => setCurrentView('search')}
+            className="p-2 rounded-full hover:bg-purple-100 transition-colors"
+          >
+            <Search className="w-6 h-6 text-purple-600" />
+          </button>
+          <button className="p-2 rounded-full hover:bg-purple-100 transition-colors">
+            <Menu className="w-6 h-6 text-purple-600" />
+          </button>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      {currentView === 'main' && (
+        <div className="relative">
+          {/* Main Affirmation Display */}
+          <div
+            ref={affirmationRef}
+            className="flex items-center justify-center min-h-[calc(100vh-80px)] p-8"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+          >
+            <div className="text-center max-w-4xl">
+              <h1 className="text-4xl md:text-6xl font-['Fredoka_One'] leading-tight mb-8">
+                {currentAffirmation.text.split('').map((char, index) => {
+                  if (char === ' ') return <span key={index}>&nbsp;</span>;
+                  const letterIndex = currentAffirmation.text.substring(0, index).replace(/\s/g, '').length;
+                  return renderLetter(char, index, letterIndex);
+                })}
+              </h1>
+            </div>
+          </div>
+
+          {/* Right Edge Actions */}
+          <div className="fixed right-4 top-1/2 transform -translate-y-1/2 space-y-4">
+            <button
+              onClick={toggleBookmark}
+              className={`p-3 rounded-full shadow-lg transition-all ${
+                isBookmarked(currentAffirmation)
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Bookmark className="w-6 h-6" />
+            </button>
+            <button
+              onClick={shareAffirmation}
+              className="p-3 rounded-full bg-white text-gray-600 hover:bg-gray-50 shadow-lg transition-all"
+            >
+              <Share2 className="w-6 h-6" />
+            </button>
+          </div>
+
+          {renderBurstAnimation()}
+        </div>
+      )}
+
+      {/* Bookmarks View */}
+      {currentView === 'bookmarks' && (
+        <div className="p-4">
+          <h2 className="text-2xl font-['Fredoka_One'] text-purple-600 mb-6">Your Bookmarks</h2>
+          {sortedBookmarks.length === 0 ? (
+            <div className="text-center py-12">
+              <Bookmark className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p className="text-gray-500">No bookmarks yet. Start saving your favorite affirmations!</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {sortedBookmarks.map((bookmark) => (
+                <div
+                  key={bookmark.bookmarkId}
+                  className="bg-white rounded-lg p-4 shadow-sm border border-purple-100"
+                >
+                  <div className="flex items-start justify-between">
+                    <p className="text-lg font-medium text-gray-800 flex-1 mr-4">
+                      {bookmark.text}
+                    </p>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => togglePin(bookmark.bookmarkId)}
+                        className={`p-2 rounded-full transition-colors ${
+                          bookmark.isPinned
+                            ? 'bg-blue-100 text-blue-600'
+                            : 'hover:bg-gray-100 text-gray-400'
+                        }`}
+                      >
+                        <Pin className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteBookmark(bookmark.bookmarkId)}
+                        className="p-2 rounded-full hover:bg-red-100 text-red-400 hover:text-red-600 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between mt-2">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      bookmark.category === 'love' ? 'bg-pink-100 text-pink-600' :
+                      bookmark.category === 'wealth' ? 'bg-green-100 text-green-600' :
+                      bookmark.category === 'health' ? 'bg-blue-100 text-blue-600' :
+                      bookmark.category === 'learning' ? 'bg-yellow-100 text-yellow-600' :
+                      'bg-purple-100 text-purple-600'
+                    }`}>
+                      {bookmark.category}
+                    </span>
+                    {bookmark.isPinned && (
+                      <span className="text-xs text-blue-600 font-medium">Pinned</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Search View */}
+      {currentView === 'search' && (
+        <div className="p-4">
+          <div className="mb-6">
             <input
               type="text"
-              placeholder="Search for affirmations..."
+              placeholder="Search affirmations..."
               value={searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full p-3 rounded-lg border border-purple-200 focus:border-purple-400 focus:outline-none"
             />
-          </div>
-        </div>
-
-        {/* Topics */}
-        {searchQuery === '' && (
-        <>
-          <div className="mb-4">
-            <h3 className="text-lg font-bold text-gray-800">Languages</h3>
-          </div>
-          <div className="mb-4 flex items-center">
-            <span className="text-gray-700 font-medium">Language</span>
-            <span className="ml-5 px-3 py-1 border border-black text-black text-sm font-medium">
-              English (Only)
-            </span>
-            <span className="ml-5 px-3 py-1 border border-black text-black text-sm font-medium">
-              English/Spanish
-            </span>
-            <span className="ml-5 px-3 py-1 border border-black text-black text-sm font-medium">
-              English/French
-            </span>
           </div>
 
           <div className="mb-6">
-  <h2 className="text-lg font-semibold text-gray-800 mb-3">Browse by Topic</h2>
-  <div>
-    {topics.map((topic, index) => (
-      <button
-        key={index}
-        onClick={() => handleTopicSearch(topic)}
-        className="p-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors text-left"
-      >
-        {topic.name}
-      </button>
-    ))}
-  </div>
-</div>
-          </>
-        )}
+            <div className="flex flex-wrap gap-2">
+              {['all', 'love', 'wealth', 'health', 'learning', 'speech'].map((category) => (
+                <button
+                  key={category}
+                  onClick={() => setSelectedCategory(category)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                    selectedCategory === category
+                      ? 'bg-purple-500 text-white'
+                      : 'bg-purple-100 text-purple-600 hover:bg-purple-200'
+                  }`}
+                >
+                  {category.charAt(0).toUpperCase() + category.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        {/* Search Results */}
-        <div className="space-y-1">
-          {searchResults.length === 0 && searchQuery !== '' ? (
-            <p className="text-gray-500 text-center mt-12">No affirmations found for "{searchQuery}"</p>
-          ) : (
-            searchResults.map((phrase, index) => (
+          <div className="space-y-3">
+            {filteredAffirmations.map((affirmation) => (
               <div
-                key={index}
-                onClick={() => handleSearchResultClick(phrase)}
-                className="p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                key={affirmation.id}
+                className="bg-white rounded-lg p-4 shadow-sm border border-purple-100 cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => {
+                  setCurrentAffirmation(affirmation);
+                  setCurrentView('main');
+                  setClickedLetters(new Set());
+                  setShowBurst(false);
+                  addToHistory(affirmation);
+                }}
               >
-                <p className="text-gray-800">{phrase}</p>
+                <p className="text-gray-800 font-medium">{affirmation.text}</p>
+                <span className={`inline-block mt-2 px-2 py-1 rounded-full text-xs font-medium ${
+                  affirmation.category === 'love' ? 'bg-pink-100 text-pink-600' :
+                  affirmation.category === 'wealth' ? 'bg-green-100 text-green-600' :
+                  affirmation.category === 'health' ? 'bg-blue-100 text-blue-600' :
+                  affirmation.category === 'learning' ? 'bg-yellow-100 text-yellow-600' :
+                  'bg-purple-100 text-purple-600'
+                }`}>
+                  {affirmation.category}
+                </span>
               </div>
-            ))
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (currentView === 'bookmarks') {
-    return (
-      <div className="min-h-screen bg-white p-4">
-        {/* Header */}
-        <div className="flex items-center mb-6">
-          <button
-            onClick={() => setCurrentView('main')}
-            className="hover:scale-110 transition-all duration-200"
-          >
-            <ArrowLeft className="w-6 h-6 text-gray-700" />
-          </button>
-          <h1 className="text-2xl font-bold text-gray-800 ml-1">Bookmarks</h1>
-        </div>
-
-        {/* Bookmarks List */}
-        <div className="space-y-1">
-          {bookmarkedPhrases.length === 0 ? (
-            <p className="text-gray-500 text-center mt-12">No bookmarks yet. Bookmark your favorite affirmations!</p>
-          ) : (
-            organizedBookmarks.map((phrase, index) => {
-              const isPinned = pinnedPhrases.includes(phrase);
-              return (
-                <div 
-                  key={index} 
-                  className={`${isPinned ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'} p-3 rounded-lg flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors`}
-                  onClick={() => handleBookmarkClick(phrase)}
-                >
-                  <div className="flex items-center gap-3 flex-1">
-                    {/* Pin Icon */}
-                    <button
-                      onClick={(e) => handlePinPhrase(phrase, e)}
-                      className="p-1 hover:scale-110 transition-all duration-200 flex-shrink-0"
-                      title={isPinned ? "Unpin" : "Pin to top"}
-                    >
-                      <img 
-                        src="/thumbtack (3).png" 
-                        alt="Pin" 
-                        className="w-4 h-4"
-                        style={{
-                          filter: isPinned 
-                            ? 'brightness(0) saturate(100%) invert(58%) sepia(96%) saturate(1458%) hue-rotate(201deg) brightness(97%) contrast(96%)'
-                            : 'grayscale(100%) brightness(0.7) opacity(0.6)'
-                        }}
-                      />
-                    </button>
-                    
-                    <p className="text-gray-800 flex-1">{phrase}</p>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* Delete Icon */}
-                    <button
-                      onClick={(e) => handleDeleteClick(phrase, e)}
-                      className="p-2 text-blue-500 hover:scale-110 transition-all duration-200"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Delete Confirmation Modal */}
-        {deleteConfirmation && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Delete Bookmark</h3>
-              <p className="text-gray-600 mb-6">Are you sure you want to delete this bookmark?</p>
-              <p className="text-gray-800 font-medium mb-6 p-3 bg-gray-50 rounded italic">"{deleteConfirmation}"</p>
-              <div className="flex gap-3 justify-end">
-                <button
-                  onClick={() => setDeleteConfirmation(null)}
-                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  No
-                </button>
-                <button
-                  onClick={() => handleRemoveBookmark(deleteConfirmation)}
-                  className="px-4 py-2 bg-red-500 text-white hover:bg-red-600 rounded-lg transition-colors"
-                >
-                  Yes, Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div 
-      className="min-h-screen bg-white flex flex-col items-center justify-center p-4 relative overflow-hidden"
-      onTouchStart={handleTouchStartSwipe}
-      onTouchMove={handleTouchMoveSwipe}
-      onTouchEnd={handleTouchEndSwipe}
-    >
-      {/* Top Navigation */}
-      <div className="absolute top-4 left-0 right-0 z-50 px-4">
-        <div className="flex justify-between items-center">
-          {/* Goaly Button */}
-          <button
-            onClick={returnToMainFeed}
-            className="px-3 py-2 hover:scale-110 transition-all duration-200 flex items-center justify-center"
-          >
-            <span className="text-xl font-black text-gray-700" style={{ fontFamily: '"Fredoka One", sans-serif' }}>
-              Goaly
-            </span>
-          </button>
-
-          {/* Bookmarks Button */}
-          <button
-            onClick={() => setCurrentView('bookmarks')}
-            className="p-3 hover:scale-110 transition-all duration-200"
-          >
-            <img 
-              src="/save (1).png" 
-              alt="Bookmarks" 
-              className="w-6 h-6"
-            />
-          </button>
-
-          {/* Plus Icon */}
-          <button
-            onClick={() => setShowPlusPopup(true)}
-            className="p-3 hover:scale-110 transition-all duration-200"
-          >
-            <img 
-              src="/plus.png" 
-              alt="Plus" 
-              className="w-8 h-8"
-            />
-          </button>
-
-          {/* Search Icon */}
-          <button
-            onClick={() => setCurrentView('search')}
-            className="p-3 hover:scale-110 transition-all duration-200"
-          >
-            <Search className="w-6 h-6 text-gray-700" />
-          </button>
-
-          {/* 3-Line Menu Icon */}
-          <button
-            className="p-3 hover:scale-110 transition-all duration-200"
-          >
-            <div className="flex flex-col gap-1">
-              <div className="w-6 h-0.5 bg-gray-700"></div>
-              <div className="w-6 h-0.5 bg-gray-700"></div>
-              <div className="w-6 h-0.5 bg-gray-700"></div>
-            </div>
-          </button>
-        </div>
-      </div>
-
-      {/* Bookmark and Share Icons - Right Side Edge */}
-      <div className="absolute right-4 top-1/2 transform translate-y-20 z-50 flex flex-col gap-3">
-        {/* Microphone Icon */}
-        <button
-          onClick={toggleListening}
-          onMouseDown={handleMicrophoneMouseDown}
-          onMouseUp={handleMicrophoneMouseUp}
-          onTouchStart={handleMicrophoneMouseDown}
-          onTouchEnd={handleMicrophoneMouseUp}
-          className={`p-3 rounded-full hover:scale-110 transition-all duration-200 ${
-            isContinuousMode
-              ? 'bg-green-500 animate-pulse'
-              : isListening 
-                ? 'bg-red-500 animate-pulse' 
-                : 'bg-white/20 backdrop-blur-sm hover:bg-white/30'
-          }`}
-        >
-          <svg 
-            className={`w-6 h-6 ${isListening ? 'text-white animate-pulse' : 'text-gray-700'}`}
-            fill="none" 
-            stroke="currentColor" 
-            viewBox="0 0 24 24"
-          >
-            <path 
-              strokeLinecap="round" 
-              strokeLinejoin="round" 
-              strokeWidth={2} 
-              d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" 
-            />
-          </svg>
-        </button>
-        
-        {/* Bookmark icon */}
-        <button
-          onClick={handleBookmark}
-          className="p-3 bg-white bg-opacity-20 rounded-full hover:scale-110 transition-all duration-200"
-        >
-          {bookmarkedPhrases.includes(currentAffirmation.text) ? (
-            <BookmarkCheck className="w-6 h-6 text-blue-500" />
-          ) : (
-            <Bookmark className="w-6 h-6 text-gray-600" />
-          )}
-        </button>
-
-        {/* Share icon */}
-        <button
-          onClick={handleShare}
-          className="bg-white/90 backdrop-blur-sm rounded-full p-3 shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-110"
-        >
-          <Link className="w-6 h-6 text-gray-600" />
-        </button>
-      </div>
-        
-      {/* Copy Alert */}
-      {showCopyAlert && (
-        <div className="absolute top-20 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-pulse">
-          Link copied to clipboard!
-        </div>
-      )}
-
-      {/* Plus Icon Popup Modal */}
-      {showPlusPopup && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full relative">
-            {/* Close X button */}
-            <button
-              onClick={() => setShowPlusPopup(false)}
-              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
-            
-            {/* Content */}
-            <div className="pr-8">
-              <p className="text-gray-800 leading-relaxed">
-                Thank you for your interest in submitting a goal or affirmation to share on the app! 
-                Since we're still getting set up, please submit it via the help desk{' '}
-                <a 
-                  href="https://bit.ly/glysupport" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-800 underline"
-                >
-                  here
-                </a>
-                . Thanks!
-              </p>
-            </div>
+            ))}
           </div>
         </div>
       )}
-
-      {/* Main Text */}
-      <div 
-        className="text-center select-none flex-1 flex items-center w-full px-2 sm:px-4 md:px-6 lg:px-8 -mt-8 sm:mt-0"
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchMove={handleTouchMove}
-      >
-        <div className="flex flex-wrap justify-center items-center gap-x-1 sm:gap-x-2 md:gap-x-3 lg:gap-x-4 xl:gap-x-6 leading-none w-full">
-          {currentAffirmation.text.split(' ').map((word, wordIndex) => (
-            <div key={wordIndex} className="flex mr-[2vw] sm:mr-[1.5vw] md:mr-[1.2vw] lg:mr-[1vw] xl:mr-[0.8vw] last:mr-0">
-              {word.split('').map((letter, letterIndex) => {
-                const globalIndex = currentAffirmation.text.split('').findIndex((char, i) => {
-                  const wordsSoFar = currentAffirmation.text.split(' ').slice(0, wordIndex).join(' ');
-                  const lettersSoFar = wordsSoFar.length + (wordsSoFar ? 1 : 0) + letterIndex;
-                  return i === lettersSoFar;
-                });
-                
-                return (
-                  <span
-                    key={letterIndex}
-                    data-letter-index={globalIndex}
-                    className={`
-                      inline-block cursor-pointer
-                      ${dynamicFontSize}
-                      font-black
-                      transition-all duration-500
-                      ${clickedLetters.has(globalIndex) 
-                        ? `${getLetterColorClass(currentAffirmation.category)} transition-none`
-                        : ''
-                      }
-                    `}
-                    style={{
-                      fontFamily: '"Fredoka One", "Fredoka", sans-serif',
-                      fontWeight: '900',
-                      color: clickedLetters.has(globalIndex) ? 'transparent' : '#ffffff',
-                      textShadow: !clickedLetters.has(globalIndex) 
-                        ? window.innerWidth <= 768 
-                          ? '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 2px 2px 4px rgba(0,0,0,0.3)'
-                          : '0.15vw 0.15vw 0.3vw rgba(0,0,0,0.4)'
-                        : 'none',
-                      WebkitTextStroke: window.innerWidth <= 768 ? 'none' : '0.2vw #000000',
-                      textStroke: window.innerWidth <= 768 ? 'none' : '0.2vw #000000',
-                    }}
-                    onClick={() => handleLetterClick(globalIndex)}
-                    onTouchStart={() => handleLetterClick(globalIndex)}
-                    onMouseEnter={() => handleMouseEnter(globalIndex)}
-                  >
-                    {letter}
-                  </span>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Navigation Arrows */}
-
-      {/* Hearts burst animation */}
-      {showHearts && (
-        <div className="absolute inset-0 pointer-events-none">
-          {generateBurstEffect()}
-        </div>
-      )}
-      
-      {/* Instructions */}
-      <div className="absolute bottom-20 sm:bottom-4 md:bottom-6 lg:bottom-8 left-1/2 transform -translate-x-1/2 text-gray-400 text-xs sm:text-sm md:text-base text-center flex items-center gap-2 px-4 pb-2">
-        <Sparkles className="w-4 h-4 text-yellow-500" />
-        <p className="whitespace-nowrap">Trace Goal or Scroll Up!</p>
-        <Sparkles className="w-4 h-4 text-yellow-500" />
-      </div>
     </div>
   );
-}
+};
 
 export default App;
