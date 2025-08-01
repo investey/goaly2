@@ -467,6 +467,7 @@ function App() {
   const [wasHoldActivated, setWasHoldActivated] = useState(false);
   const [recognitionInstance, setRecognitionInstance] = useState<SpeechRecognition | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showConstructionPopup, setShowConstructionPopup] = useState(false);
   const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Keyboard navigation
@@ -808,6 +809,13 @@ function App() {
     };
 
     recognition.start();
+  };
+
+  const showConstructionMessage = () => {
+    setShowConstructionPopup(true);
+    setTimeout(() => {
+      setShowConstructionPopup(false);
+    }, 3000); // Hide after 3 seconds
   };
 
   // Search functionality
@@ -1567,7 +1575,7 @@ function App() {
 
           {/* Plus Icon */}
           <button
-            onClick={() => setShowPlusPopup(true)}
+            onClick={showConstructionMessage}
             className="p-3 hover:scale-110 transition-all duration-200"
           >
             <img 
@@ -1587,6 +1595,7 @@ function App() {
 
           {/* 3-Line Menu Icon */}
           <button
+            onClick={showConstructionMessage}
             className="p-3 hover:scale-110 transition-all duration-200"
           >
             <div className="flex flex-col gap-1">
@@ -1686,6 +1695,26 @@ function App() {
                 . Thanks!
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Construction Popup */}
+      {showConstructionPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 max-w-sm w-full text-center shadow-xl">
+            <h3 className="text-lg font-['Fredoka_One'] text-purple-600 mb-2">
+              Under Construction
+            </h3>
+            <p className="text-gray-700 font-['Fredoka'] mb-4">
+              Check Back Soon! Thanks!
+            </p>
+            <button
+              onClick={() => setShowConstructionPopup(false)}
+              className="px-4 py-2 bg-purple-500 text-white rounded-lg font-['Fredoka'] hover:bg-purple-600 transition-colors"
+            >
+              OK
+            </button>
           </div>
         </div>
       )}
