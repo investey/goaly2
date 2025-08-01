@@ -1790,7 +1790,7 @@ function App() {
       {/* Instructions */}
       <div className="absolute bottom-20 sm:bottom-4 md:bottom-6 lg:bottom-8 left-1/2 transform -translate-x-1/2 text-gray-400 text-xs sm:text-sm md:text-base text-center flex items-center gap-2 px-4 pb-2">
         <Sparkles className="w-4 h-4 text-yellow-500" />
-        <p className="whitespace-nowrap">Trace Goal or Scroll Up!</p>
+        <p className="whitespace-nowrap">Trace Goal, Press Mic & Speak or Scroll Up!</p>
         <Sparkles className="w-4 h-4 text-yellow-500" />
       </div>
     </div>
